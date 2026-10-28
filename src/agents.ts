@@ -3,6 +3,7 @@ import { z } from "zod";
 import { tool, type StructuredToolInterface } from "@langchain/core/tools";
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatGroq } from "@langchain/groq";
+import { pool } from "./db";
 import { ChatOllama } from "@langchain/ollama";
 import {
   Annotation,
@@ -10,7 +11,7 @@ import {
   START,
   END,
 } from "@langchain/langgraph";
-import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
+import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import {
   BaseMessage,
   HumanMessage,
@@ -78,7 +79,21 @@ const checkInventoryTool = tool(
     }),
   }
 );
-
+export const refundTool = tool(
+  async ({ amount, orderId, reason }) => {
+    // amount will guaranteed be a number here (e.g. 0 instead of "0")
+    return `Refunded ${amount} for order ${orderId}`;
+  },
+  {
+    name: "refund_order",
+    description: "Issue a refund for an order",
+    schema: z.object({
+      amount: z.coerce.number().describe("The amount to refund as a number"), // <-- Use z.coerce.number()
+      orderId: z.string(),
+      reason: z.string(),
+    }),
+  }
+);
 const createRefundTool = tool(
   async ({ orderId, amount, reason }) => {
     // High-risk mutation: ledger write / financial transaction
@@ -96,7 +111,6 @@ const createRefundTool = tool(
     description: "Issue a financial refund back to the customer's payment method.",
     schema: z.object({
       orderId: z.string().describe("The order ID to refund"),
-      amount: z.number().positive().describe("The exact monetary amount to credit"),
       reason: z.string().describe("Justification for the refund"),
     }),
   }
@@ -185,7 +199,7 @@ function shouldContinue(state: typeof AgentState.State): string {
 // ==========================================
 // 6. GRAPH COMPILATION WITH PERSISTENCE
 // ==========================================
-const checkpointer = SqliteSaver.fromConnString("./agent_checkpoints.db");
+export const checkpointer = new PostgresSaver(pool);
 
 const workflow = new StateGraph(AgentState)
   .addNode("agent", agentNode)
